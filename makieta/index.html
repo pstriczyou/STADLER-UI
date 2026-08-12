@@ -1,0 +1,952 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Formularz — wzorzec UI · Stadler Depo</title>
+
+<!-- Alpine napędza interakcje makiety: walidację, licznik znaków, przełączniki
+     i znacznik niezapisanych zmian. Leży obok pliku, żeby makieta otwierała się
+     dwuklikiem i pokazywała wszystkie stany bez żadnej konfiguracji. -->
+<script>
+  document.addEventListener('alpine:init', () => {
+    Alpine.data('wzorzec', () => ({
+      /* --- widoczność adnotacji dydaktycznych ------------------------------ */
+      adnotacje: true,
+
+      /* --- dane formularza ------------------------------------------------- */
+      numer: '',
+      kod: '',
+      rodzaj: '',
+      status: 'roboczy',
+      tytul: '',
+      opis: '',
+      ilosc: '',
+      obowiazuje_od: '',
+      priorytet: 'zwykly',
+      powiazany: '',
+      obszary: [],
+      powiadom: false,
+
+      /* --- stan ekranu ----------------------------------------------------- */
+      bledy: {},
+      zmienione: false,
+      zapisywanie: false,
+      komunikat: null,
+
+      get liczbaBledow() { return Object.keys(this.bledy).length },
+      get maBledy() { return this.liczbaBledow > 0 },
+      get identyfikator() {
+        if (!this.numer || !this.rodzaj) return null
+        return this.numer.toUpperCase() + ' · ' + this.rodzaj
+      },
+
+      oznaczZmiane() {
+        this.zmienione = true
+        this.komunikat = null
+      },
+
+      /* Walidacja jest tu wyłącznie po to, żeby makieta pokazała stan błędu
+         i podsumowanie na górze formularza. Reguły są przykładowe. */
+      sprawdz() {
+        const b = {}
+        if (!this.numer.trim()) {
+          b.numer = 'Podaj numer dokumentu.'
+        } else if (!/^[A-Za-z]{2}_\d{7}$/.test(this.numer.trim())) {
+          b.numer = 'Numer ma postać: dwie litery, podkreślnik, siedem cyfr — np. SI_3210103.'
+        }
+        if (!this.rodzaj) b.rodzaj = 'Wybierz rodzaj pozycji.'
+        if (!this.tytul.trim()) {
+          b.tytul = 'Podaj tytuł.'
+        } else if (this.tytul.trim().length < 5) {
+          b.tytul = 'Tytuł krótszy niż 5 znaków nie powie nikomu, czego dotyczy pozycja.'
+        }
+        if (this.ilosc !== '' && Number(this.ilosc) <= 0) {
+          b.ilosc = 'Ilość musi być większa od zera.'
+        }
+        if (!this.obowiazuje_od) b.obowiazuje_od = 'Podaj datę obowiązywania.'
+        if (this.obszary.length === 0) b.obszary = 'Zaznacz przynajmniej jeden obszar.'
+        this.bledy = b
+        return !this.maBledy
+      },
+
+      przejdzDoBledu(pole) {
+        const el = document.getElementById(pole)
+        if (el) { el.focus(); el.scrollIntoView({ block: 'center', behavior: 'smooth' }) }
+      },
+
+      async zapisz() {
+        if (!this.sprawdz()) {
+          this.komunikat = null
+          this.$nextTick(() => this.$refs.podsumowanie?.focus())
+          return
+        }
+        this.zapisywanie = true
+        /* Udawane opóźnienie sieci — bez niego nie widać stanu „zapisywanie…”,
+           a to właśnie ten stan najczęściej ginie w implementacji. */
+        await new Promise(r => setTimeout(r, 900))
+        this.zapisywanie = false
+        this.zmienione = false
+        this.komunikat = { typ: 'sukces', tresc: 'Zapisano. W makiecie nic nie poszło do bazy.' }
+      },
+
+      wyczysc() {
+        Object.assign(this, {
+          numer: '', kod: '', rodzaj: '', status: 'roboczy', tytul: '', opis: '',
+          ilosc: '', obowiazuje_od: '', priorytet: 'zwykly', powiazany: '',
+          obszary: [], powiadom: false, bledy: {}, zmienione: false,
+          komunikat: { typ: 'info', tresc: 'Formularz wyczyszczony.' }
+        })
+      }
+    }))
+  })
+</script>
+<script src="assets/vendor/alpine.min.js" defer></script>
+
+<style>
+/* ===================================================================
+   TOKENY
+   Jedyne miejsce, w którym stoją wartości kolorów i wymiarów. Nowy
+   ekran nie wpisuje własnego #hex ani własnego paddingu — sięga tutaj.
+   Kolor #00599C jest zmierzony z pliku logo (piksel rdzenia litery),
+   nie znaleziony w sieci.
+   =================================================================== */
+:root {
+  --niebieski: #00599C;
+  --niebieski-jasny: #1f7ac2;
+  --niebieski-tlo: #e8f1f8;
+
+  --tlo: #f4f6f9;
+  --karta: #ffffff;
+  --tekst: #1f2733;
+  --tekst-jasny: #667085;
+  --obwodka: #e4e8ee;
+  --obwodka-mocna: #cbd3de;
+
+  --blad: #b42318;
+  --blad-tlo: #fef3f2;
+  --uwaga: #9a5b12;
+  --uwaga-tlo: #fdf1e3;
+  --sukces: #027a48;
+  --sukces-tlo: #ecfdf3;
+
+  --biel: #ffffff;
+  --niebieski-ciemny: #10456f;   /* tekst na --niebieski-tlo, kontrast AA */
+  --tekst-placeholder: var(--tekst-placeholder);
+  --pole-wylaczone: var(--pole-wylaczone);
+  --tlo-delikatne: #fcfdfe;
+  --szary-tlo: #eef1f5;
+  --uwaga-obwodka: #f0dcc0;
+  --blad-obwodka: #f3c9c5;
+
+  --promien: 8px;
+  --promien-karty: 10px;
+  --cien-karty: 0 1px 2px rgba(16, 24, 40, .05);
+  --cien-paska: 0 -2px 12px rgba(16, 24, 40, .08);
+  --cien-ogniska: 0 0 0 3px rgba(31, 122, 194, .12);
+  --cien-ogniska-blad: 0 0 0 3px rgba(180, 35, 24, .12);
+
+  /* Tylko dla makiety — żółte ramki objaśniające. W aplikacji tych tokenów nie ma. */
+  --adnotacja-tlo: #fffaf0;
+  --adnotacja-obwodka: #e3b34d;
+  --adnotacja-tekst: #6b4d16;
+  --adnotacja-tekst-mocny: #4a3410;
+
+  /* 44 px to nie zaokrąglenie w górę. Ekran bywa obsługiwany w rękawicach
+     roboczych — mniejszy cel klika się obok. */
+  --wys-pola: 44px;
+}
+
+* { box-sizing: border-box; }
+[x-cloak] { display: none !important; }
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Helvetica Neue", system-ui, Arial, sans-serif;
+  background: var(--tlo);
+  color: var(--tekst);
+  -webkit-font-smoothing: antialiased;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* --- nagłówek ------------------------------------------------------ */
+header.top {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--biel);
+  border-top: 3px solid var(--niebieski);
+  border-bottom: 1px solid var(--obwodka);
+  padding: 0 28px; height: 64px;
+  display: flex; align-items: center; gap: 16px;
+}
+header.top .marka { display: flex; align-items: center; gap: 12px; }
+header.top .marka img.logo { height: 26px; width: auto; display: block; }
+header.top .marka .sub {
+  font-weight: 500; letter-spacing: .3px; color: var(--tekst-jasny);
+  font-size: 14px; padding-left: 12px; border-left: 1px solid var(--obwodka);
+}
+header.top nav { margin-left: auto; display: flex; gap: 4px; }
+header.top nav a {
+  color: var(--tekst); text-decoration: none; font-size: 13px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .5px;
+  padding: 8px 14px; border-radius: 6px;
+}
+header.top nav a:hover { color: var(--niebieski); background: var(--niebieski-tlo); }
+header.top nav a[aria-current="page"] { color: var(--niebieski); background: var(--niebieski-tlo); }
+
+/* --- pasek makiety ------------------------------------------------- */
+.pasek-makiety {
+  background: var(--uwaga-tlo);
+  border-bottom: 1px solid var(--uwaga-obwodka);
+  color: var(--uwaga);
+  font-size: 13px;
+}
+.pasek-makiety .srodek {
+  max-width: 1120px; margin: 0 auto; padding: 10px 28px;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.pasek-makiety strong { font-weight: 700; }
+.przelacznik-adnotacji {
+  margin-left: auto; display: flex; align-items: center; gap: 8px;
+  cursor: pointer; user-select: none; font-weight: 600;
+}
+
+/* --- układ strony -------------------------------------------------- */
+main { max-width: 1120px; margin: 0 auto; padding: 28px 28px 64px; }
+h1.tytul-strony { font-size: 24px; font-weight: 700; margin: 6px 0 4px; }
+p.podtytul { color: var(--tekst-jasny); margin: 0 0 24px; font-size: 15px; }
+
+.uklad { display: grid; grid-template-columns: minmax(0, 1fr) 296px; gap: 28px; align-items: start; }
+
+/* --- karta / sekcja ------------------------------------------------ */
+.karta {
+  background: var(--karta); border: 1px solid var(--obwodka);
+  border-radius: var(--promien-karty); box-shadow: var(--cien-karty);
+  padding: 22px 24px; margin-bottom: 18px;
+}
+.karta > h2 {
+  font-size: 16px; font-weight: 700; margin: 0 0 2px;
+  display: flex; align-items: center; gap: 10px;
+}
+.karta > h2 .numer-sekcji {
+  width: 22px; height: 22px; flex: none;
+  display: inline-grid; place-items: center;
+  background: var(--niebieski-tlo); color: var(--niebieski);
+  border-radius: 50%; font-size: 12px; font-weight: 700;
+}
+.karta > .opis-sekcji { color: var(--tekst-jasny); font-size: 13.5px; margin: 0 0 18px; }
+
+/* --- siatka pól ----------------------------------------------------- */
+.siatka { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
+.siatka .szeroko { grid-column: 1 / -1; }
+
+/* --- pole ----------------------------------------------------------- */
+.pole { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pole > label, .pole > .etykieta-grupy {
+  font-size: 13.5px; font-weight: 600; color: var(--tekst);
+  display: flex; align-items: center; gap: 6px;
+}
+.wymagane { color: var(--blad); font-weight: 700; }
+.opcjonalne { color: var(--tekst-jasny); font-weight: 500; font-size: 12px; }
+
+input[type="text"], input[type="number"], input[type="date"], input[type="search"],
+select, textarea {
+  width: 100%;
+  min-height: var(--wys-pola);
+  padding: 10px 12px;
+  /* 16px, nie 15. Safari na iOS przybliża stronę przy ognisku w polu o czcionce
+     mniejszej niż 16px i użytkownik zostaje z rozjechanym układem. */
+  font: inherit; font-size: 16px; color: var(--tekst);
+  background: var(--biel);
+  border: 1px solid var(--obwodka-mocna);
+  border-radius: var(--promien);
+  transition: border-color .12s, box-shadow .12s;
+}
+textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23667085' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center;
+  padding-right: 36px;
+}
+input::placeholder, textarea::placeholder { color: var(--tekst-placeholder); }
+
+/* Focus jest widoczny zawsze i nigdy nie jest usuwany. Formularz na hali
+   bywa wypełniany samą klawiaturą — bez pierścienia nie wiadomo, gdzie się jest. */
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+button:focus-visible, a:focus-visible, summary:focus-visible, [role="switch"]:focus-visible {
+  outline: 2px solid var(--niebieski-jasny);
+  outline-offset: 2px;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--niebieski-jasny);
+  box-shadow: var(--cien-ogniska);
+}
+
+input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] {
+  border-color: var(--blad); background: var(--blad-tlo);
+}
+input[aria-invalid="true"]:focus, textarea[aria-invalid="true"]:focus, select[aria-invalid="true"]:focus {
+  box-shadow: var(--cien-ogniska-blad);
+}
+input:disabled, select:disabled, textarea:disabled {
+  background: var(--pole-wylaczone); color: var(--tekst-jasny); cursor: not-allowed;
+}
+input[readonly] { background: var(--pole-wylaczone); color: var(--tekst-jasny); }
+
+.mono { font-family: "Cascadia Mono", Consolas, "SF Mono", monospace; letter-spacing: .3px; }
+
+/* pole z przyrostkiem (jednostka) */
+.z-przyrostkiem { position: relative; }
+.z-przyrostkiem input { padding-right: 56px; }
+.z-przyrostkiem .przyrostek {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  color: var(--tekst-jasny); font-size: 13px; pointer-events: none;
+}
+
+/* pomoc i błąd — zawsze POD polem, nigdy nad. Czytający wraca wzrokiem
+   do pola, w którym właśnie stoi, a nie skacze w górę. */
+.pomoc { font-size: 12.5px; color: var(--tekst-jasny); }
+.blad-pola {
+  font-size: 12.5px; color: var(--blad); font-weight: 600;
+  display: flex; align-items: flex-start; gap: 6px;
+}
+.blad-pola::before { content: "!"; flex: none;
+  width: 15px; height: 15px; margin-top: 1px;
+  display: inline-grid; place-items: center;
+  background: var(--blad); color: var(--biel); border-radius: 50%;
+  font-size: 10px; font-weight: 700;
+}
+
+/* --- grupy wyboru --------------------------------------------------- */
+.grupa-wyboru { display: flex; flex-wrap: wrap; gap: 8px; }
+.grupa-wyboru label {
+  display: flex; align-items: center; gap: 8px;
+  min-height: var(--wys-pola); padding: 8px 14px;
+  border: 1px solid var(--obwodka-mocna); border-radius: var(--promien);
+  background: var(--biel); cursor: pointer; font-size: 14px;
+}
+.grupa-wyboru label:hover { border-color: var(--niebieski-jasny); }
+.grupa-wyboru input { accent-color: var(--niebieski); width: 17px; height: 17px; }
+.grupa-wyboru label:has(input:checked) {
+  border-color: var(--niebieski); background: var(--niebieski-tlo); font-weight: 600;
+}
+
+.lista-checkboxow { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+
+/* --- przełącznik ---------------------------------------------------- */
+.przelacznik { display: flex; align-items: center; gap: 12px; cursor: pointer; min-height: var(--wys-pola); }
+.przelacznik .tor {
+  width: 42px; height: 24px; flex: none; border-radius: 999px;
+  background: var(--obwodka-mocna); position: relative; transition: background .15s;
+}
+.przelacznik .tor::after {
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 18px; height: 18px; border-radius: 50%; background: var(--biel);
+  transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2);
+}
+.przelacznik input { position: absolute; opacity: 0; width: 0; height: 0; }
+.przelacznik input:checked + .tor { background: var(--niebieski); }
+.przelacznik input:checked + .tor::after { transform: translateX(18px); }
+.przelacznik input:focus-visible + .tor { outline: 2px solid var(--niebieski-jasny); outline-offset: 2px; }
+
+/* --- plik ------------------------------------------------------------ */
+.pole-pliku {
+  position: relative;
+  border: 1.5px dashed var(--obwodka-mocna); border-radius: var(--promien);
+  padding: 18px; text-align: center; background: var(--tlo-delikatne); cursor: pointer;
+  display: block;
+}
+.pole-pliku:hover { border-color: var(--niebieski-jasny); background: var(--niebieski-tlo); }
+/* Input jest niewidoczny, ale NIE przez display:none — tak schowany wypada
+   z kolejności Tab i pola nie da się dosięgnąć klawiaturą. Zostaje w układzie
+   o zerowym rozmiarze, a pierścień ogniska rysuje etykieta wokół niego. */
+.pole-pliku input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.pole-pliku:focus-within { outline: 2px solid var(--niebieski-jasny); outline-offset: 2px; border-color: var(--niebieski-jasny); }
+.pole-pliku .glowna-linia { font-weight: 600; font-size: 14px; }
+.pole-pliku .druga-linia { color: var(--tekst-jasny); font-size: 12.5px; margin-top: 2px; }
+
+/* --- komunikaty ------------------------------------------------------ */
+.komunikat {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px 16px; border-radius: var(--promien);
+  border-left: 3px solid; font-size: 13.5px; margin-bottom: 16px;
+}
+.komunikat .tresc { min-width: 0; }
+.komunikat strong { display: block; margin-bottom: 2px; }
+.komunikat.info    { background: var(--niebieski-tlo); border-color: var(--niebieski); color: var(--niebieski-ciemny); }
+.komunikat.uwaga   { background: var(--uwaga-tlo);     border-color: var(--uwaga);     color: var(--uwaga); }
+.komunikat.blad    { background: var(--blad-tlo);      border-color: var(--blad);      color: var(--blad); }
+.komunikat.sukces  { background: var(--sukces-tlo);    border-color: var(--sukces);    color: var(--sukces); }
+.komunikat ul { margin: 6px 0 0; padding-left: 18px; }
+.komunikat a { color: inherit; }
+
+/* --- przyciski -------------------------------------------------------- */
+.przycisk {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: var(--wys-pola); padding: 10px 20px;
+  font: inherit; font-size: 15px; font-weight: 600;
+  border-radius: var(--promien); border: 1px solid transparent;
+  cursor: pointer; background: var(--biel); color: var(--tekst);
+  border-color: var(--obwodka-mocna);
+  transition: background .12s, border-color .12s;
+}
+/* Każdy stan hover jest zawężony przez :not(:disabled) — inaczej przycisk
+   nieaktywny reaguje na najechanie i wygląda, jakby dało się go kliknąć. */
+.przycisk:hover:not(:disabled) { border-color: var(--niebieski-jasny); color: var(--niebieski); }
+.przycisk.glowny { background: var(--niebieski); color: var(--biel); border-color: var(--niebieski); }
+.przycisk.glowny:hover:not(:disabled) { background: var(--niebieski-jasny); border-color: var(--niebieski-jasny); color: var(--biel); }
+.przycisk.cichy { background: transparent; border-color: transparent; color: var(--tekst-jasny); }
+.przycisk.cichy:hover:not(:disabled) { background: var(--tlo); color: var(--tekst); }
+.przycisk.niebezpieczny { background: var(--biel); color: var(--blad); border-color: var(--blad-obwodka); }
+.przycisk.niebezpieczny:hover:not(:disabled) { background: var(--blad-tlo); border-color: var(--blad); color: var(--blad); }
+.przycisk:disabled { opacity: .55; cursor: not-allowed; }
+
+/* --- pasek akcji ------------------------------------------------------ */
+/* sticky, nie fixed. Pasek należy do formularza: jest przyklejony do dołu okna,
+   dopóki formularz jest na ekranie, i odjeżdża razem z jego końcem. Wersja fixed
+   wisiałaby nad wzornikiem niżej, oferując zapis czegoś, czego już nie widać. */
+.pasek-akcji {
+  position: sticky; bottom: 0; z-index: 15; margin-top: 18px;
+  background: var(--biel); border: 1px solid var(--obwodka);
+  border-radius: var(--promien-karty); box-shadow: var(--cien-paska);
+}
+.pasek-akcji .srodek {
+  padding: 14px 18px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.pasek-akcji .stan { font-size: 13px; color: var(--tekst-jasny); display: flex; align-items: center; gap: 7px; }
+.pasek-akcji .akcje { margin-left: auto; display: flex; gap: 10px; flex-wrap: wrap; }
+.kropka { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.kropka.zmienione { background: var(--uwaga); }
+.kropka.zapisane { background: var(--sukces); }
+
+/* --- znaczniki -------------------------------------------------------- */
+.znacznik {
+  display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  background: var(--niebieski-tlo); color: var(--niebieski); font-weight: 700;
+  letter-spacing: .2px; white-space: nowrap;
+}
+.znacznik.uwaga  { background: var(--uwaga-tlo);  color: var(--uwaga); }
+.znacznik.blad   { background: var(--blad-tlo);   color: var(--blad); }
+.znacznik.sukces { background: var(--sukces-tlo); color: var(--sukces); }
+.znacznik.szary  { background: var(--szary-tlo);   color: var(--tekst-jasny); }
+
+/* --- panel boczny ----------------------------------------------------- */
+aside.panel { position: sticky; top: 96px; display: flex; flex-direction: column; gap: 14px; }
+aside.panel .karta { padding: 16px 18px; margin: 0; }
+aside.panel h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--tekst-jasny); margin: 0 0 10px; }
+aside.panel ul { margin: 0; padding-left: 16px; font-size: 13px; color: var(--tekst); }
+aside.panel li { margin-bottom: 7px; }
+aside.panel kbd {
+  font-family: inherit; font-size: 11.5px; background: var(--tlo);
+  border: 1px solid var(--obwodka-mocna); border-bottom-width: 2px;
+  border-radius: 4px; padding: 1px 6px;
+}
+
+/* --- adnotacje dydaktyczne (znikają przełącznikiem) -------------------- */
+.adnotacja {
+  font-size: 12px; line-height: 1.45; color: var(--adnotacja-tekst);
+  background: var(--adnotacja-tlo); border-left: 2px solid var(--adnotacja-obwodka);
+  padding: 6px 10px; border-radius: 0 4px 4px 0;
+}
+.adnotacja b { color: var(--adnotacja-tekst-mocny); }
+.adnotacja code, .adnotacja kbd {
+  font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px;
+  background: var(--biel); border: 1px solid var(--adnotacja-obwodka);
+  border-radius: 3px; padding: 0 4px;
+}
+
+/* --- wzornik ---------------------------------------------------------- */
+.wzornik { margin-top: 44px; }
+.wzornik > h2 { font-size: 20px; margin: 0 0 4px; }
+.wzornik .rzad { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.wzornik .kolumny { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+details.rozwijane summary {
+  cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--niebieski);
+  padding: 8px 0; list-style: none; display: flex; align-items: center; gap: 7px;
+}
+details.rozwijane summary::-webkit-details-marker { display: none; }
+details.rozwijane summary::before { content: "▸"; transition: transform .12s; }
+details.rozwijane[open] summary::before { transform: rotate(90deg); }
+details.rozwijane .wnetrze { padding: 4px 0 8px 16px; font-size: 13.5px; color: var(--tekst-jasny); }
+
+footer.stopka {
+  max-width: 1120px; margin: 0 auto; padding: 24px 28px 40px;
+  color: var(--tekst-jasny); font-size: 13px; border-top: 1px solid var(--obwodka);
+}
+
+/* --- telefon / tablet -------------------------------------------------- */
+@media (max-width: 900px) {
+  .uklad { grid-template-columns: minmax(0, 1fr); }
+  aside.panel { position: static; order: -1; }
+}
+@media (max-width: 640px) {
+  header.top { padding: 0 16px; }
+  header.top nav { display: none; }
+  main { padding: 20px 16px 48px; }
+  .pasek-makiety .srodek, .pasek-akcji .srodek { padding: 12px 16px; }
+  .siatka { grid-template-columns: minmax(0, 1fr); }
+  .karta { padding: 18px 16px; }
+  .pasek-akcji .akcje { margin-left: 0; width: 100%; }
+  .pasek-akcji .akcje .przycisk { flex: 1 1 auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+
+<body>
+
+<header class="top">
+  <div class="marka">
+    <img class="logo" src="assets/logo.png" alt="Stadler">
+    <span class="sub">Depo</span>
+  </div>
+  <nav>
+    <a href="#">Skróty</a>
+    <a href="#">Instrukcje</a>
+    <a href="#" aria-current="page">Rejestr</a>
+    <a href="#">Zespół</a>
+  </nav>
+</header>
+
+<div x-data="wzorzec()">
+
+  <div class="pasek-makiety">
+    <div class="srodek">
+      <span><strong>Makieta.</strong> Nic się nie zapisuje, wszystkie wartości są zmyślone.</span>
+      <label class="przelacznik-adnotacji">
+        <input type="checkbox" x-model="adnotacje" style="accent-color: var(--uwaga); width:16px; height:16px;">
+        Pokaż adnotacje wzorca
+      </label>
+    </div>
+  </div>
+
+  <main>
+    <h1 class="tytul-strony">Nowa pozycja w rejestrze</h1>
+    <p class="podtytul">
+      Wzorcowy formularz aplikacji. Każdy typ pola, każdy stan i każdy komunikat,
+      jakich ekran wewnętrzny potrzebuje — w jednym miejscu, do skopiowania.
+    </p>
+
+    <div class="uklad">
+
+      <!-- ================= KOLUMNA GŁÓWNA ================= -->
+      <div>
+        <form @submit.prevent="zapisz()" @input="oznaczZmiane()" novalidate>
+
+          <!-- Podsumowanie błędów. Stoi na górze formularza, jest ogniskowalne
+               i wymienia błędy jako linki do pól. To jedyny sposób, żeby ktoś
+               poruszający się klawiaturą dowiedział się, co poszło nie tak,
+               bez przewijania całej strony. -->
+          <div class="komunikat blad" x-show="maBledy" x-cloak
+               role="alert" tabindex="-1" x-ref="podsumowanie">
+            <div class="tresc">
+              <strong x-text="'Formularz ma ' + liczbaBledow + ' ' + (liczbaBledow === 1 ? 'błąd' : 'błędów') + ' — nic nie zostało zapisane.'"></strong>
+              <ul>
+                <template x-for="[pole, tresc] in Object.entries(bledy)" :key="pole">
+                  <li><a href="#" @click.prevent="przejdzDoBledu(pole)" x-text="tresc"></a></li>
+                </template>
+              </ul>
+            </div>
+          </div>
+
+          <div class="komunikat" :class="komunikat?.typ" x-show="komunikat" x-cloak role="status">
+            <div class="tresc" x-text="komunikat?.tresc"></div>
+          </div>
+
+          <!-- ---------------- SEKCJA 1 ---------------- -->
+          <section class="karta">
+            <h2><span class="numer-sekcji">1</span> Identyfikacja</h2>
+            <p class="opis-sekcji">Czym jest ta pozycja i skąd ją rozpoznać.</p>
+
+            <div class="siatka">
+
+              <!-- pole tekstowe: wymagane, z maską i błędem -->
+              <div class="pole">
+                <label for="numer">Numer dokumentu <span class="wymagane" aria-hidden="true">*</span></label>
+                <input type="text" id="numer" name="numer" class="mono"
+                       x-model="numer"
+                       placeholder="SI_3210103"
+                       autocomplete="off" spellcheck="false"
+                       :aria-invalid="bledy.numer ? 'true' : 'false'"
+                       aria-describedby="numer-pomoc numer-blad">
+                <p class="pomoc" id="numer-pomoc">Dwie litery, podkreślnik, siedem cyfr.</p>
+                <p class="blad-pola" id="numer-blad" x-show="bledy.numer" x-cloak x-text="bledy.numer"></p>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Pole tekstowe wymagane.</b> Gwiazdka jest <code>aria-hidden</code> — czytnik ekranu
+                  bierze wymagalność z komunikatu błędu, nie ze znaku graficznego. Format opisujemy
+                  <b>zawsze</b> w pomocy pod polem, nie dopiero w błędzie po odrzuceniu.
+                </p>
+              </div>
+
+              <!-- pole skanera -->
+              <div class="pole">
+                <label for="kod">Kod z etykiety</label>
+                <input type="text" id="kod" name="kod" class="mono"
+                       x-model="kod"
+                       placeholder="zeskanuj albo wpisz"
+                       autocomplete="off" spellcheck="false"
+                       inputmode="text"
+                       @keydown.enter.prevent="$refs.rodzaj.focus()"
+                       aria-describedby="kod-pomoc">
+                <p class="pomoc" id="kod-pomoc">Czytnik kodów kreskowych działa jak klawiatura.</p>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Pole skanera.</b> Czytnik USB kończy wpis <kbd>Enter</kbd>-em. Bez przechwycenia
+                  tego klawisza skan <b>wysyła formularz</b> w połowie wypełniania. Tutaj Enter
+                  przenosi ognisko do następnego pola — skanowanie po kolei działa jednym ruchem.
+                </p>
+              </div>
+
+              <!-- select -->
+              <div class="pole">
+                <label for="rodzaj">Rodzaj <span class="wymagane" aria-hidden="true">*</span></label>
+                <select id="rodzaj" name="rodzaj" x-model="rodzaj" x-ref="rodzaj"
+                        :aria-invalid="bledy.rodzaj ? 'true' : 'false'"
+                        aria-describedby="rodzaj-blad">
+                  <option value="">— wybierz —</option>
+                  <option value="instrukcja">Instrukcja</option>
+                  <option value="rysunek">Rysunek</option>
+                  <option value="szkolenie">Szkolenie</option>
+                  <option value="formularz">Formularz</option>
+                </select>
+                <p class="blad-pola" id="rodzaj-blad" x-show="bledy.rodzaj" x-cloak x-text="bledy.rodzaj"></p>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Lista wyboru.</b> Pierwsza pozycja to <code>— wybierz —</code> o pustej wartości,
+                  nie domyślnie zaznaczona treść. Domyślna wartość, której nikt nie wybrał,
+                  wchodzi do bazy jako świadoma decyzja i nikt się nie zorientuje.
+                </p>
+              </div>
+
+              <!-- pole wyliczane, readonly -->
+              <div class="pole">
+                <label for="identyfikator">Identyfikator systemowy</label>
+                <input type="text" id="identyfikator" class="mono" readonly tabindex="-1"
+                       :value="identyfikator || ''"
+                       placeholder="powstanie z numeru i rodzaju"
+                       aria-describedby="identyfikator-pomoc">
+                <p class="pomoc" id="identyfikator-pomoc">Wyliczany. Nie da się go wpisać ręcznie.</p>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Pole wyliczane.</b> Szare tło, <code>readonly</code>, poza kolejnością
+                  <kbd>Tab</kbd>. Pokazujemy je, bo użytkownik chce wiedzieć, co powstanie —
+                  ale nie udajemy, że może to zmienić.
+                </p>
+              </div>
+
+              <!-- radio jako segmenty -->
+              <div class="pole szeroko" role="group" aria-labelledby="etykieta-status">
+                <span class="etykieta-grupy" id="etykieta-status">Status</span>
+                <div class="grupa-wyboru">
+                  <label><input type="radio" name="status" value="roboczy" x-model="status"> Roboczy</label>
+                  <label><input type="radio" name="status" value="opiniowany" x-model="status"> W opiniowaniu</label>
+                  <label><input type="radio" name="status" value="obowiazuje" x-model="status"> Obowiązuje</label>
+                  <label><input type="radio" name="status" value="wycofany" x-model="status"> Wycofany</label>
+                </div>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Grupa radio zamiast listy.</b> Przy 2–5 opcjach pokazujemy wszystkie —
+                  wybór jest jednym kliknięciem i widać zakres możliwości. Od sześciu w górę:
+                  <code>select</code>. Cały prostokąt jest klikalny, nie sam kwadracik.
+                </p>
+              </div>
+
+            </div>
+          </section>
+
+          <!-- ---------------- SEKCJA 2 ---------------- -->
+          <section class="karta">
+            <h2><span class="numer-sekcji">2</span> Treść i parametry</h2>
+            <p class="opis-sekcji">To, co zobaczy szukający.</p>
+
+            <div class="siatka">
+
+              <div class="pole szeroko">
+                <label for="tytul">Tytuł <span class="wymagane" aria-hidden="true">*</span></label>
+                <input type="text" id="tytul" name="tytul" x-model="tytul"
+                       placeholder="np. Zabezpieczenie powierzchni lakierniczej przed montażem"
+                       :aria-invalid="bledy.tytul ? 'true' : 'false'"
+                       aria-describedby="tytul-blad">
+                <p class="blad-pola" id="tytul-blad" x-show="bledy.tytul" x-cloak x-text="bledy.tytul"></p>
+              </div>
+
+              <div class="pole szeroko">
+                <label for="opis">Opis <span class="opcjonalne">— opcjonalny</span></label>
+                <textarea id="opis" name="opis" x-model="opis" maxlength="600"
+                          placeholder="Czego dotyczy pozycja i kiedy się jej używa."
+                          aria-describedby="opis-licznik"></textarea>
+                <p class="pomoc" id="opis-licznik">
+                  <span x-text="opis.length"></span> / 600 znaków
+                </p>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Pole długiego tekstu.</b> Licznik pokazuje wykorzystanie <b>zanim</b> limit
+                  zostanie osiągnięty, a <code>maxlength</code> ucina po cichu — dlatego licznik
+                  jest obowiązkowy wszędzie, gdzie stoi limit. Pole rośnie pionowo, nigdy poziomo.
+                </p>
+              </div>
+
+              <div class="pole">
+                <label for="ilosc">Ilość <span class="opcjonalne">— opcjonalna</span></label>
+                <div class="z-przyrostkiem">
+                  <input type="number" id="ilosc" name="ilosc" x-model="ilosc"
+                         min="0" step="0.5" inputmode="decimal" placeholder="0"
+                         :aria-invalid="bledy.ilosc ? 'true' : 'false'"
+                         aria-describedby="ilosc-blad">
+                  <span class="przyrostek" aria-hidden="true">szt.</span>
+                </div>
+                <p class="blad-pola" id="ilosc-blad" x-show="bledy.ilosc" x-cloak x-text="bledy.ilosc"></p>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Liczba z jednostką.</b> Jednostka jest w polu, nie w etykiecie — inaczej
+                  po wypełnieniu nie widać, czy to sztuki, czy metry. <code>inputmode</code>
+                  otwiera klawiaturę numeryczną na tablecie.
+                </p>
+              </div>
+
+              <div class="pole">
+                <label for="obowiazuje_od">Obowiązuje od <span class="wymagane" aria-hidden="true">*</span></label>
+                <input type="date" id="obowiazuje_od" name="obowiazuje_od" x-model="obowiazuje_od"
+                       :aria-invalid="bledy.obowiazuje_od ? 'true' : 'false'"
+                       aria-describedby="obowiazuje_od-blad">
+                <p class="blad-pola" id="obowiazuje_od-blad" x-show="bledy.obowiazuje_od" x-cloak x-text="bledy.obowiazuje_od"></p>
+              </div>
+
+              <div class="pole">
+                <label for="priorytet">Priorytet</label>
+                <select id="priorytet" name="priorytet" x-model="priorytet">
+                  <option value="niski">Niski</option>
+                  <option value="zwykly">Zwykły</option>
+                  <option value="wysoki">Wysoki</option>
+                </select>
+              </div>
+
+              <div class="pole">
+                <label for="powiazany">Pozycja powiązana</label>
+                <input type="search" id="powiazany" name="powiazany" x-model="powiazany"
+                       list="podpowiedzi" placeholder="szukaj po numerze lub tytule"
+                       autocomplete="off" aria-describedby="powiazany-pomoc">
+                <datalist id="podpowiedzi">
+                  <option value="SI_3210103 — Przygotowanie powierzchni"></option>
+                  <option value="SI_3210147 — Kontrola spoin"></option>
+                  <option value="AL_1233701 — Zalecenie montażowe"></option>
+                </datalist>
+                <p class="pomoc" id="powiazany-pomoc">Podpowiedzi po trzecim znaku.</p>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Pole z podpowiedziami.</b> Lista rozwija się <b>pod polem</b>, nie
+                  w osobnym oknie wyboru. Podpowiedzi pokazujemy dopiero od trzeciego znaku —
+                  wcześniej lista jest tak długa, że niczego nie zawęża. Pole zostaje zwykłym
+                  polem tekstowym: wartość spoza listy da się wpisać.
+                </p>
+              </div>
+
+            </div>
+          </section>
+
+          <!-- ---------------- SEKCJA 3 ---------------- -->
+          <section class="karta">
+            <h2><span class="numer-sekcji">3</span> Zakres i załączniki</h2>
+            <p class="opis-sekcji">Kogo dotyczy i co dołączamy.</p>
+
+            <div class="siatka">
+
+              <div class="pole szeroko" role="group" aria-labelledby="etykieta-obszary" aria-describedby="obszary-blad">
+                <span class="etykieta-grupy" id="etykieta-obszary">
+                  Obszary <span class="wymagane" aria-hidden="true">*</span>
+                </span>
+                <div class="lista-checkboxow grupa-wyboru">
+                  <label><input type="checkbox" value="poszycie"   x-model="obszary"> Poszycie</label>
+                  <label><input type="checkbox" value="dach"       x-model="obszary"> Dach</label>
+                  <label><input type="checkbox" value="sterowka"   x-model="obszary"> Sterówka</label>
+                  <label><input type="checkbox" value="maszynownia" x-model="obszary"> Maszynownia</label>
+                  <label><input type="checkbox" value="podwozie"   x-model="obszary"> Podwozie</label>
+                  <label><input type="checkbox" value="wnetrze"    x-model="obszary"> Przedział pasażerski</label>
+                </div>
+                <p class="blad-pola" id="obszary-blad" x-show="bledy.obszary" x-cloak x-text="bledy.obszary"></p>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Wielokrotny wybór.</b> Checkboxy w siatce, nie <code>&lt;select multiple&gt;</code> —
+                  ten drugi wymaga trzymania <kbd>Ctrl</kbd> i w rękawicach jest nie do obsłużenia.
+                  Błąd grupy wisi pod całą grupą, bo nie należy do żadnego pojedynczego pola.
+                </p>
+              </div>
+
+              <div class="pole szeroko">
+                <span class="etykieta-grupy">Załącznik</span>
+                <label class="pole-pliku">
+                  <input type="file" accept=".pdf,.xlsx,.docx">
+                  <span class="glowna-linia">Wybierz plik albo przeciągnij tutaj</span>
+                  <span class="druga-linia">PDF, XLSX lub DOCX · do 25 MB</span>
+                </label>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Wybór pliku.</b> Natywny <code>input[type=file]</code> jest ukryty, ale to on
+                  przyjmuje kliknięcie — cały obszar jest etykietą. Ograniczenia (typy, rozmiar)
+                  stoją na wierzchu, nie w komunikacie po nieudanej wysyłce.
+                </p>
+              </div>
+
+              <div class="pole szeroko">
+                <label class="przelacznik">
+                  <input type="checkbox" x-model="powiadom" role="switch" :aria-checked="powiadom">
+                  <span class="tor" aria-hidden="true"></span>
+                  <span>Powiadom zespół o dodaniu pozycji</span>
+                </label>
+                <p class="adnotacja" x-show="adnotacje" x-cloak>
+                  <b>Przełącznik zamiast checkboxa</b> tylko wtedy, gdy chodzi o włączenie
+                  <b>zachowania</b> („powiadamiaj”), a nie o zaznaczenie faktu („dotyczy dachu”).
+                  Pomylenie tych dwóch znaczeń to najczęstszy błąd w formularzach wewnętrznych.
+                </p>
+              </div>
+
+              <details class="rozwijane szeroko">
+                <summary>Pola rzadkie — rozwiń, jeśli są potrzebne</summary>
+                <div class="wnetrze">
+                  Sekcja, do której prawie nikt nie zagląda, jest zwinięta, a nie usunięta.
+                  Domyślnie zamknięte <code>&lt;details&gt;</code> nie potrzebuje ani linijki
+                  JavaScriptu i działa z klawiatury bez naszej pomocy.
+                </div>
+              </details>
+
+            </div>
+          </section>
+
+          <!-- pasek akcji, przyklejony do dołu okna -->
+          <div class="pasek-akcji">
+            <div class="srodek">
+              <span class="stan" x-show="zmienione" x-cloak>
+                <span class="kropka zmienione"></span> Niezapisane zmiany
+              </span>
+              <span class="stan" x-show="!zmienione && komunikat?.typ === 'sukces'" x-cloak>
+                <span class="kropka zapisane"></span> Zapisano
+              </span>
+              <div class="akcje">
+                <button type="button" class="przycisk cichy" @click="wyczysc()">Wyczyść</button>
+                <button type="button" class="przycisk" @click="zapisz()" :disabled="zapisywanie">Zapisz i dodaj kolejną</button>
+                <button type="submit" class="przycisk glowny" :disabled="zapisywanie">
+                  <span x-show="!zapisywanie">Zapisz pozycję</span>
+                  <span x-show="zapisywanie" x-cloak>Zapisywanie…</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </form>
+
+        <!-- ================= WZORNIK ================= -->
+        <div class="wzornik">
+          <h2>Wzornik</h2>
+          <p class="podtytul">Stany i elementy, których formularz wyżej nie pokazuje wszystkich naraz.</p>
+
+          <section class="karta">
+            <h2><span class="numer-sekcji">A</span> Stany pola</h2>
+            <p class="opis-sekcji">Każdy stan ma być rozpoznawalny bez kliknięcia.</p>
+            <div class="kolumny">
+              <div class="pole">
+                <label for="st-1">Domyślne</label>
+                <input type="text" id="st-1" placeholder="puste">
+              </div>
+              <div class="pole">
+                <label for="st-2">Wypełnione</label>
+                <input type="text" id="st-2" value="SI_3210103" class="mono">
+              </div>
+              <div class="pole">
+                <label for="st-3">Błędne</label>
+                <input type="text" id="st-3" value="SI-321" class="mono" aria-invalid="true" aria-describedby="st-3-b">
+                <p class="blad-pola" id="st-3-b">Numer ma postać: dwie litery, podkreślnik, siedem cyfr.</p>
+              </div>
+              <div class="pole">
+                <label for="st-4">Wyliczone (readonly)</label>
+                <input type="text" id="st-4" value="SI_3210103 · instrukcja" class="mono" readonly>
+              </div>
+              <div class="pole">
+                <label for="st-5">Zablokowane</label>
+                <input type="text" id="st-5" value="brak uprawnień" disabled>
+                <p class="pomoc">Zablokowane pole zawsze mówi <em>dlaczego</em>.</p>
+              </div>
+              <div class="pole">
+                <label for="st-6">Z jednostką</label>
+                <div class="z-przyrostkiem">
+                  <input type="text" id="st-6" value="12,5">
+                  <span class="przyrostek" aria-hidden="true">kg</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="karta">
+            <h2><span class="numer-sekcji">B</span> Komunikaty</h2>
+            <p class="opis-sekcji">Cztery znaczenia, cztery kolory. Piątego nie ma.</p>
+            <div class="komunikat info">
+              <div class="tresc"><strong>Informacja</strong>Stan rzeczy, o którym warto wiedzieć. Nic nie trzeba robić.</div>
+            </div>
+            <div class="komunikat uwaga">
+              <div class="tresc"><strong>Ostrzeżenie</strong>Można iść dalej, ale wynik będzie niepełny — np. część danych pochodzi z migawki sprzed dwóch tygodni.</div>
+            </div>
+            <div class="komunikat blad">
+              <div class="tresc"><strong>Błąd</strong>Operacja się nie udała i nic nie zostało zapisane. Komunikat mówi, co zrobić dalej, a nie tylko że się nie udało.</div>
+            </div>
+            <div class="komunikat sukces" style="margin-bottom:0">
+              <div class="tresc"><strong>Powodzenie</strong>Zapisano. Znika sam po chwili, jeśli nie niesie numeru ani identyfikatora.</div>
+            </div>
+          </section>
+
+          <section class="karta">
+            <h2><span class="numer-sekcji">C</span> Przyciski i znaczniki</h2>
+            <p class="opis-sekcji">Na ekranie jest dokładnie jeden przycisk główny.</p>
+            <div class="rzad" style="margin-bottom:20px">
+              <button class="przycisk glowny">Zapisz pozycję</button>
+              <button class="przycisk">Akcja drugorzędna</button>
+              <button class="przycisk cichy">Anuluj</button>
+              <button class="przycisk niebezpieczny">Usuń</button>
+              <button class="przycisk glowny" disabled>Niedostępny</button>
+            </div>
+            <div class="rzad">
+              <span class="znacznik">obowiązuje</span>
+              <span class="znacznik szary">wersja robocza</span>
+              <span class="znacznik uwaga">wymaga przeglądu</span>
+              <span class="znacznik blad">wycofany</span>
+              <span class="znacznik sukces">zatwierdzony</span>
+            </div>
+          </section>
+        </div>
+
+      </div>
+
+      <!-- ================= PANEL BOCZNY ================= -->
+      <aside class="panel">
+        <div class="karta">
+          <h3>Jak czytać tę stronę</h3>
+          <ul>
+            <li>Żółte ramki to <b>adnotacje wzorca</b> — wyłącz je przełącznikiem na górze, żeby zobaczyć czysty ekran.</li>
+            <li>Naciśnij <b>Zapisz</b> na pustym formularzu, żeby zobaczyć obsługę błędów.</li>
+            <li>Zwęź okno poniżej 640&nbsp;px — układ schodzi do jednej kolumny.</li>
+          </ul>
+        </div>
+        <div class="karta">
+          <h3>Zasady, których pilnujemy</h3>
+          <ul>
+            <li>Etykieta <b>nad</b> polem, pomoc i błąd <b>pod</b> polem.</li>
+            <li>Jeden przycisk główny na ekran.</li>
+            <li>Wysokość celu min. 44&nbsp;px — rękawice.</li>
+            <li>Kolor nigdy nie niesie znaczenia sam: przy każdym kolorze stoi tekst.</li>
+            <li>Pomoc pod polem opisuje format, <b>zanim</b> ktoś się pomyli.</li>
+          </ul>
+        </div>
+        <div class="karta">
+          <h3>Klawiatura</h3>
+          <ul>
+            <li><kbd>Tab</kbd> obchodzi pola w kolejności czytania.</li>
+            <li><kbd>Enter</kbd> w polu skanera przechodzi dalej, nie wysyła.</li>
+            <li>Pierścień ogniska widoczny wszędzie.</li>
+          </ul>
+        </div>
+      </aside>
+
+    </div>
+  </main>
+</div>
+
+<footer class="stopka">
+  Stadler Depo — wzorzec UI · makieta statyczna, dane zmyślone.
+</footer>
+
+</body>
+</html>

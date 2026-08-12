@@ -1,0 +1,15 @@
+# Śmieci systemowe
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Edytory
+.vscode/
+.idea/
+*.swp
+
+# Makieta jest statycznym HTML-em i nie przechodzi przez żadne narzędzie.
+node_modules/
+dist/
+build/
+.parcel-cache/
